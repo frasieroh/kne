@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	cpb "github.com/openconfig/kne/proto/ceos"
 	tpb "github.com/openconfig/kne/proto/topo"
 	"github.com/openconfig/kne/topo/node"
 	scraplinetwork "github.com/scrapli/scrapligo/driver/network"
@@ -35,15 +36,24 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 
 	ceos "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
-	ceosclient "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1/clientset"
+	clientintf "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1/client"
+	ceosclient "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1/dynamic"
 )
 
 const (
 	scrapliPlatformName = "arista_eos"
 )
 
-// ErrIncompatibleCliConn raised when an invalid scrapligo cli transport type is found.
-var ErrIncompatibleCliConn = errors.New("incompatible cli connection in use")
+var (
+	// ErrIncompatibleCliConn raised when an invalid scrapligo cli transport type is found.
+	ErrIncompatibleCliConn = errors.New("incompatible cli connection in use")
+	// Client override, currently used to provide a fake for testing.
+	client clientintf.CEosLabDeviceV1Alpha1Interface = nil
+)
+
+func WithClient(otherClient clientintf.CEosLabDeviceV1Alpha1Interface) {
+	client = otherClient
+}
 
 type Node struct {
 	*node.Impl
@@ -152,10 +162,27 @@ func (n *Node) CreateCRD(ctx context.Context) error {
 		}
 		device.Spec.IntfMapping[k] = v.GetName()
 	}
+	if vendorData := config.GetVendorData(); vendorData != nil {
+		ceosLabConfig := &cpb.CEosLabConfig{}
+		err := vendorData.UnmarshalTo(ceosLabConfig)
+		if err != nil {
+			return err
+		}
+		if toggleOverrides := ceosLabConfig.GetToggleOverrides(); toggleOverrides != nil {
+			device.Spec.ToggleOverrides = toggleOverrides
+		}
+		if waitForAgents := ceosLabConfig.GetWaitForAgents(); waitForAgents != nil {
+			device.Spec.WaitForAgents = waitForAgents
+		}
+	}
 	// Post to k8s
-	client, err := ceosclient.NewForConfig(n.RestConfig)
-	if err != nil {
-		return err
+	var err error
+	// The client can be set by a test, for example, to a fake
+	if client == nil {
+		client, err = ceosclient.NewForConfig(n.RestConfig)
+		if err != nil {
+			return err
+		}
 	}
 	_, err = client.CEosLabDevices(n.Namespace).Create(ctx, device, metav1.CreateOptions{})
 	if err != nil {

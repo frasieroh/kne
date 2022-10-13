@@ -19,7 +19,11 @@ import (
 	"testing"
 	"time"
 
+	ceosapi "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
+	fakeclient "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1/dynamic/fake"
+	"github.com/google/go-cmp/cmp"
 	"github.com/h-fam/errdiff"
+	ceospb "github.com/openconfig/kne/proto/ceos"
 	topopb "github.com/openconfig/kne/proto/topo"
 	"github.com/openconfig/kne/topo/node"
 	scrapliopts "github.com/scrapli/scrapligo/driver/options"
@@ -27,6 +31,7 @@ import (
 	scrapliutil "github.com/scrapli/scrapligo/util"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -239,6 +244,157 @@ func TestNew(t *testing.T) {
 			}
 			if !proto.Equal(n.GetProto(), tt.want) {
 				t.Fatalf("New() failed: got\n\n%swant\n\n%s", prototext.Format(n.GetProto()), prototext.Format(tt.want))
+			}
+		})
+	}
+}
+
+func TestCRD(t *testing.T) {
+	client, err := fakeclient.NewSimpleClientset()
+	if err != nil {
+		t.Fatalf("cannot create fake CEosLabDevice client: %v", err)
+	}
+	WithClient(client)
+	vendorData, err := anypb.New(&ceospb.CEosLabConfig{
+		WaitForAgents: []string{"ConfigAgent", "Sysdb"},
+		ToggleOverrides: map[string]bool{
+			"TestToggle1": true,
+			"TestToggle2": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("cannot marshal CEosLabConfig into \"any\" protobuf: %v", err)
+	}
+	tests := []struct {
+		desc       string
+		proto      *topopb.Node
+		wantDevice *ceosapi.CEosLabDeviceSpec
+		wantErr    string
+	}{{
+		desc: "success",
+		proto: &topopb.Node{
+			Name: "device",
+			Type: topopb.Node_ARISTA_CEOS,
+			Labels: map[string]string{
+				"foo": "bar",
+				"biz": "baz",
+			},
+			Config: &topopb.Config{
+				Args:  []string{"arg1", "arg2"},
+				Image: "test-image",
+				Env: map[string]string{
+					"ENV1": "VAL1",
+					"ENV2": "VAL2",
+				},
+				Sleep: 1,
+				Cert: &topopb.CertificateCfg{
+					Config: &topopb.CertificateCfg_SelfSigned{
+						SelfSigned: &topopb.SelfSignedCertCfg{
+							CertName:   "foo",
+							KeyName:    "bar",
+							KeySize:    4096,
+							CommonName: "device",
+						},
+					},
+				},
+				InitImage:  "test-init-image",
+				VendorData: vendorData,
+			},
+			Services: map[uint32]*topopb.Service{
+				100: {
+					Name:    "foo",
+					Inside:  100,
+					Outside: 110,
+				},
+				200: {
+					Name:    "gnmi",
+					Inside:  200,
+					Outside: 210,
+				},
+			},
+			Constraints: map[string]string{
+				"cpu":    "0.5",
+				"memory": "2Gb",
+			},
+			Vendor:  topopb.Vendor_ARISTA,
+			Model:   "ceoslab",
+			Version: "version-test",
+			Os:      "os-test",
+			Interfaces: map[string]*topopb.Interface{
+				"eth1": {
+					Name: "Ethernet1/1",
+				},
+				"eth2": {
+					Name: "Ethernet1/2",
+				},
+			},
+		},
+		wantDevice: &ceosapi.CEosLabDeviceSpec{
+			EnvVar: map[string]string{
+				"ENV1": "VAL1",
+				"ENV2": "VAL2",
+			},
+			Image: "test-image",
+			Args:  []string{"arg1", "arg2"},
+			Resources: map[string]string{
+				"cpu":    "0.5",
+				"memory": "2Gb",
+			},
+			Services: map[string]ceosapi.ServiceConfig{
+				"foo": {
+					TCPPorts: []ceosapi.PortConfig{{
+						In:  100,
+						Out: 110,
+					}},
+				},
+				"gnmi": {
+					TCPPorts: []ceosapi.PortConfig{{
+						In:  200,
+						Out: 210,
+					}},
+				},
+			},
+			InitContainerImage: "test-init-image",
+			NumInterfaces:      3,
+			Sleep:              1,
+			CertConfig: ceosapi.CertConfig{
+				SelfSignedCerts: []ceosapi.SelfSignedCertConfig{{
+					CertName:   "foo",
+					KeyName:    "bar",
+					KeySize:    4096,
+					CommonName: "device",
+				}},
+			},
+			IntfMapping: map[string]string{
+				"eth1": "Ethernet1/1",
+				"eth2": "Ethernet1/2",
+			},
+			WaitForAgents: []string{"ConfigAgent", "Sysdb"},
+			ToggleOverrides: map[string]bool{
+				"TestToggle1": true,
+				"TestToggle2": false,
+			},
+		},
+		wantErr: "",
+	}}
+	ctx := context.Background()
+	getOpts := metav1.GetOptions{}
+	ns := "default"
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			node := &Node{
+				Impl: &node.Impl{
+					Namespace: ns,
+					Proto:     tt.proto,
+				},
+			}
+			err := node.CreateCRD(ctx)
+			if s := errdiff.Check(err, tt.wantErr); s != "" {
+				t.Errorf("New() unexpected err: %s", s)
+			}
+			device, err := client.CEosLabDevices(ns).Get(ctx, tt.proto.GetName(), getOpts)
+			if s := cmp.Diff(tt.wantDevice, &device.Spec); s != "" {
+				t.Errorf("New() CEosLabDevice CRDs unexpected diff (-want +got):\n%s", s)
 			}
 		})
 	}
