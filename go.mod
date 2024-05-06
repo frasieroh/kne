@@ -1,4 +1,6 @@
-module github.com/openconfig/kne
+module github.com/frasieroh/kne
+
+replace github.com/openconfig/kne => github.com/frasieroh/kne v0.0.0-20240506035344-5b2983ea00ac
 
 go 1.21
 
@@ -17,6 +19,7 @@ require (
 	github.com/open-traffic-generator/keng-operator v0.3.28
 	github.com/open-traffic-generator/snappi/gosnappi v0.13.7
 	github.com/openconfig/gnmi v0.10.0
+	github.com/openconfig/kne v0.1.17
 	github.com/openconfig/lemming/operator v0.2.0
 	github.com/openconfig/ondatra v0.5.3-0.20240221005017-ee276ff6695e
 	github.com/pborman/uuid v1.2.1
@@ -95,7 +98,6 @@ require (
 	github.com/moby/spdystream v0.2.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/openconfig/gnoi v0.2.0 // indirect
 	github.com/openconfig/gnoigo v0.0.0-20231026010722-87413fdb22e7 // indirect
